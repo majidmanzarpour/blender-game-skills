@@ -1,6 +1,6 @@
 ---
 name: blender-image-to-3d
-description: Build a game-ready 3D asset in Blender from reference images (concept art, photos, turnarounds, sketches, screenshots) for any category, including characters, creatures, architecture, vehicles, props, weapons and environment pieces, through gated phases with rendered evidence compared against the reference. Use this whenever a user supplies or mentions a reference image and wants a 3D model or game asset made from it (modelled, blocked out, sculpted, retopologised, textured, rigged, animated or exported for a game engine), even when Blender is not named. Includes bpy scripts for scene calibration, review renders matched to the reference camera, silhouette measurement, validation, baking, GLB/FBX export with manifests, and clean reimport.
+description: Build or refine Blender game assets from reference images, with measured silhouette checks, optional rigging and animation, and validated GLB/FBX delivery. Use for reference-driven 3D modelling or game-asset requests; match the workflow to the requested stage and target engine.
 license: MIT
 ---
 
@@ -19,16 +19,22 @@ as inferred. Say so when a single image forces inference; do not present a guess
 
 ## Runtime
 
-- Blender 4.2 or newer (used through 5.2), run headless: `blender --background --python <script> -- <args>`.
+Resolve paths relative to this skill's directory, not the current project. Run Blender scripts
+in a separate process with `--python-exit-code 1` so Python errors fail the command. Quote
+`"$BLENDER_BIN"` because app paths can contain spaces. Use a Python environment with Pillow for
+`compose_review.py`; do not install packages into Blender's bundled Python for that helper.
+
+- Blender 4.2 or newer (used through 5.2), run headless: `blender --background --python-exit-code 1 --python <script> -- <args>`.
   Blender 5.x changed several APIs these builds touch; `references/blender-5-notes.md` lists them
   with runtime, baking and review lessons.
   Resolve the binary once: `$BLENDER_BIN`, then `blender` on PATH, then
   `/Applications/Blender.app/Contents/MacOS/Blender`. Workbench renders need no GPU on macOS or
   Windows; on a headless Linux box without a GPU, pass `--engine cycles` to review_render.py.
 - A live Blender session through an MCP server (execute-Python tool) is optional and useful for
-  inspection. Even then, build through the numbered scripts and save the same master file, so the
-  build stays reproducible. In a live session, `exec(open(path).read())` a script and call its
-  functions instead of the command line.
+  inspection. Keep builds reproducible through numbered scripts. Inspect the live scene and its
+  save state before changing it; never run file-opening or factory-reset helpers over unsaved
+  work. To load helpers without triggering their CLI, use `runpy.run_path(path)` and call the
+  returned functions. Prefer separate Blender processes for build, bake, export and roundtrip.
 - All modelling is written as bpy code in `<asset>/build/NN_<phase>.py`, copied from
   `assets/build_template.py`. Each script opens the master, deletes what it owns, rebuilds it,
   saves. Rerunning any phase is safe. Constants are measured metres with a comment naming the
@@ -51,6 +57,16 @@ Read `references/categories.md` for the asset's category before Phase 0. Read
 before Phases 1, 5 and 9. Read `references/blender-5-notes.md` when a script fails on a 5.x API or
 before long renders and bakes.
 
+## Choose the required scope
+
+For a blockout request, stop after blockout evidence; for an existing asset, start at the
+affected phase and rerun its downstream checks. Use only the relevant category section.
+Static props need no rig, secondary motion or animation. Add LODs, texture baking and animation
+only when the brief or target requires them. A simple material can export directly without
+baking. Keep the measurements that distinguish this asset rather than forcing a fixed count.
+Use the user's engine, budgets and scale; when unspecified, state reversible defaults and
+continue. Ask only when a missing choice materially changes the result.
+
 ## Gate protocol (used at the end of every phase)
 
 1. `review_render.py` with `--ref-cam AZ EL LENS` (estimated in Phase 0) plus
@@ -66,12 +82,13 @@ before long renders and bakes.
    ceiling as a deviation instead of chasing both.
 3. Write the mismatches as measurements, not adjectives: "head 12 percent too tall", "wheelbase
    0.3 m short", "band 4 width +0.06". Fix the constants in the build script, rerun the phase,
-   re-render. Repeat until every mismatch is inside the phase tolerance.
-4. Show the user the compare sheet, the remaining deviations, and what was inferred. Continue on
-   approval. If the user said not to ask, continue when the tolerance is met and keep the sheets
-   in `review/` for them. If the user reviews in a live viewport, reload the master there after
-   each rebuild: anything hidden only for rendering (a mannequin under the costume) still shows
-   in their view.
+   re-render. If two iterations make no measured improvement, revisit camera calibration or
+   conflicting references before spending more time on geometry; report any unresolved gate.
+4. Show the user the compare sheet, the remaining deviations, and what was inferred. Continue
+   the authorized workflow when the tolerance is met and keep the sheets in `review/`. Pause
+   for phase approval only when the user requested it or a consequential choice is unresolved.
+   Reload a master in the live viewport only after accounting for unsaved edits: anything hidden
+   only for rendering (a mannequin under the costume) still shows in their view.
 
 Tolerances: blockout IoU 0.85 and every band width within 0.05 of the reference (0.90 and 0.03
 for forms); proportions within 5 percent (blockout) and 2 percent (forms) on the measurements
@@ -88,7 +105,7 @@ ASSET      prefix and name (CH_, CR_, AR_, VH_, PR_, WP_, EN_)
 CATEGORY   character | creature | architecture | vehicle | prop | weapon | environment, plus subtype (biped, quadruped, winged, wheeled, tracked, modular kit, hinged prop)
 VIEWS      per image: view type (front, side, back, top, three-quarter, concept), estimated camera azimuth, elevation, lens (0 = orthographic), how much of the image height the subject fills, where the ground line sits
 SCALE      real size along each axis with the evidence (human height, door, wheel, brick course, weapon grip); state the number used
-PROPORTIONS 8 to 15 ratios measured in the image that the blockout gate will check (head heights, shoulder width to height, wheelbase to length, storey height to width)
+PROPORTIONS ratios measured in the image that distinguish this asset and that the blockout gate will check (head heights, shoulder width to height, wheelbase to length, storey height to width)
 PARTS      every part in construction and overlap order; for each: separate object yes/no, rigid/deforming/simulated, attaches to, moves about (pivot)
 SILHOUETTE the 3 to 5 features that make it read at gameplay size
 MATERIALS  per part: role (skin, scales, worn leather, painted metal, carved stone, glass), colour, roughness range, wear pattern
@@ -97,9 +114,8 @@ INFERRED   every side, dimension or part the images do not show and the prior us
 TARGET     engine, export format, budget tier from the table, game camera (elevation, distance, lens), subject height in pixels at typical gameplay distance
 ```
 
-Ask the user only for what the images cannot tell: target engine and format, real size when no
-scale cue exists, budget tier, whether rigging and animation are needed, the game camera. Offer
-these defaults and proceed with them when the user says to just go: 1 unit = 1 m, Z up in
+Reuse the user's target engine, format, scale, budget, rigging and camera choices. For missing
+reversible choices, state these defaults and proceed: 1 unit = 1 m, Z up in
 Blender with the subject facing -Y, GLB export, standard tier from the budgets table, a
 three-quarter overhead camera at 50 mm, 128 px subject height, rig only if the category deforms,
 no animation unless asked.
@@ -136,7 +152,7 @@ The commands in this file use an illustrative 1.85 m knight (`CH_Knight`, Unity)
 asset-specific value (name, height, camera, budget, engine, inferred list) from the brief.
 
 ```bash
-$BLENDER_BIN --background --python scripts/init_master.py -- \
+"$BLENDER_BIN" --background --python-exit-code 1 --python scripts/init_master.py -- \
   --out CH_Knight/CH_Knight_master.blend --name CH_Knight --height 1.85 \
   --ref-front ref/front.png --ref-right ref/side.png --ref-extra ref/concept.png \
   --subject-frac 0.88 --ground-frac 0.04 --cell 2.0 --cam-elev 50 --cam-az 30 --cam-dist 12 --cam-lens 50
@@ -171,7 +187,7 @@ For multi-asset work, render the greybox lineup at relative scale and check that
 in shoulder width, head shape, posture and stance, not only colour.
 
 ```bash
-$BLENDER_BIN --background --python scripts/review_render.py -- --blend CH_Knight/CH_Knight_master.blend \
+"$BLENDER_BIN" --background --python-exit-code 1 --python scripts/review_render.py -- --blend CH_Knight/CH_Knight_master.blend \
   --out CH_Knight/review/02_blockout --collections LOW --views front,side,threequarter \
   --ref-cam 35 12 50 --mode clay --gameplay-px 128
 python scripts/compose_review.py --ref ref/front.png --render CH_Knight/review/02_blockout/clay_front.png \
@@ -218,15 +234,15 @@ simulated cloth get deliberate loops.
 Quads in the source, triangulated delivery; lock the triangulation before baking so shading does
 not change later. Run the cleanup: doubles, stray islands, zero-area faces, flipped normals,
 overlapping interior shells. Open boundaries are fine on cloth sheets, hair cards and decals;
-collision proxies must be closed. Build LOD1 and LOD2 now with `lod_copy` and fix their outlines
+collision proxies must be closed. When required, build LOD1 and LOD2 with `lod_copy` and fix their outlines
 by hand, keeping head, shoulder, weapon, wheel and doorway silhouettes.
 
 Gate: `validate.py` with the budget tier's tri count (exit 0, warnings explained), wire mode
 render of LOW, and a clay compare against Phase 3 renders showing no silhouette loss.
 
 ```bash
-$BLENDER_BIN --background --python scripts/validate.py -- --blend CH_Knight/CH_Knight_master.blend \
-  --collections LOW,COLLISION,SOCKETS --out CH_Knight/review/04_validate.json --budget-tris 60000 --require-uv
+"$BLENDER_BIN" --background --python-exit-code 1 --python scripts/validate.py -- --blend CH_Knight/CH_Knight_master.blend \
+  --collections LOW,COLLISION,SOCKETS --out CH_Knight/review/04_validate.json --budget-tris 60000
 ```
 
 ## Phase 5: UVs, baking, materials
@@ -243,7 +259,7 @@ not a white outline around every edge; no baked directional lighting in base col
 the portable set and rebuild the delivery materials:
 
 ```bash
-$BLENDER_BIN --background --python scripts/bake_maps.py -- --blend CH_Knight/CH_Knight_master.blend \
+"$BLENDER_BIN" --background --python-exit-code 1 --python scripts/bake_maps.py -- --blend CH_Knight/CH_Knight_master.blend \
   --low LOW --high HIGH --res 2048 --maps normal,ao,basecolor,roughness,metallic \
   --out CH_Knight/textures --extrusion 0.02 --ray-dist 0.05 --margin 16 --samples 64 \
   --match-by-name --rebuild-material --save CH_Knight/CH_Knight_baked.blend
@@ -254,6 +270,14 @@ transparent shells (corneas, visors, glass) out of the sources with `--exclude-s
 baked; LOD1 and LOD2 reuse its material and maps (they came from `lod_copy`, same UV layout).
 Pass `--all-lods` only when a LOD has its own UVs. Document colour space per map, normal-map
 green convention and any channel packing in the manifest.
+
+Require UVs with `validate.py --require-uv` before baking. Request only needed maps: a normal
+bake requires matching HIGH sources; omit `normal` for an asset with no HIGH geometry.
+AO is wired through the glTF occlusion socket. For FBX, deliver the AO map separately and assign
+it in the target engine. Inspect transparency and other material features after rebuilding.
+The baked file is a delivery snapshot. Continue Phases 6–8 on the editable master; after those
+phases, regenerate this snapshot from the finished master before export. Never export the
+earlier pre-rig snapshot. When no baking is needed, export the finished master directly.
 
 Gate: material mode render with `--turntable 12` (moving light across the surface), greyscale
 compare at gameplay size, checker render clean at the joints. Hard edges and UV seams inspected
@@ -297,15 +321,17 @@ it into a blank Blender and compare against the manifest. Nothing from REF, HIGH
 ships.
 
 ```bash
-$BLENDER_BIN --background --python scripts/export_delivery.py -- --blend CH_Knight/CH_Knight_baked.blend \
+"$BLENDER_BIN" --background --python-exit-code 1 --python scripts/export_delivery.py -- --blend CH_Knight/CH_Knight_baked.blend \
   --out CH_Knight/exports --name CH_Knight --format GLB --split-lods \
   --inferred "back of cloak from symmetry, sole tread generic" --engine unity
-$BLENDER_BIN --background --python scripts/roundtrip.py -- --file CH_Knight/exports/CH_Knight.glb \
+"$BLENDER_BIN" --background --python-exit-code 1 --python scripts/roundtrip.py -- --file CH_Knight/exports/CH_Knight.glb \
   --out CH_Knight/review/09_roundtrip --expect-height 1.85
 ```
 
-Gate: roundtrip exit 0 (tri counts per LOD, bone names, clip lengths, images all match the
-manifest; height within 1 percent; nothing below the ground plane), and the roundtrip clay render
+Gate: roundtrip exit 0 checks mesh names, tri counts per LOD and required deformation bones
+against the adjacent manifest, image availability, height within 1 percent and ground placement.
+Inspect clip names/timing, texture roles and channel packing separately; these are not certified
+by exit 0. Use `--manifest` if the manifest is elsewhere. The roundtrip clay render must also
 matches the Phase 3 clay render. Then import into a clean project of the target engine if one is
 available and play every clip with the real weapon or garment combination.
 
@@ -328,3 +354,10 @@ Do not describe the asset as matching the reference where a measurement says oth
 - Keep the master non-destructive; apply modifiers on the delivery copy.
 - Never rename an export to satisfy a loader that expects a different skeleton; provide a mapping.
 - Say what was not visible in the reference. A guessed back is a guess in the manifest.
+
+## Regression check
+
+Run `python scripts/test_pipeline.py --blender "$BLENDER_BIN"` in the Pillow environment after
+changing helpers. This builds isolated temporary fixtures; it does not prove artistic quality,
+full character deformation, or integration in the target engine. The prompts in `evals/` need
+their own reference images and are not an automated test suite.

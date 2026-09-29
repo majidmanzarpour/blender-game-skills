@@ -124,6 +124,8 @@ def main():
 
     ref, ren = load(a.ref), load(a.render)
     rm, nm = ref_mask(ref, a.ref_tol), render_mask(ren)
+    if a.measure and (not rm.getbbox() or not nm.getbbox()):
+        raise SystemExit("MEASURE failed: empty reference or render mask")
     if not a.no_crop:
         ref, rm = crop_pad(ref, rm)
         ren, nm = crop_pad(ren, nm)
@@ -171,9 +173,6 @@ def main():
 
     if a.measure:
         pr, pn = profile(rm), profile(nm)
-        if not pr or not pn:
-            print("MEASURE skipped: empty mask")
-            return
         res = {
             "ref": {k: v for k, v in pr.items() if k != "_img"},
             "render": {k: v for k, v in pn.items() if k != "_img"},

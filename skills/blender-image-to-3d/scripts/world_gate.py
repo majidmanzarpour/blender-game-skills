@@ -6,7 +6,7 @@ for pixel: nothing is re-centred or re-scaled, and a model that is 3 cm too shor
 the axis loses IoU instead of being normalised away (compose_review.py aligns bounding boxes and
 cannot see that).
 
-blender --background --python scripts/world_gate.py -- \
+blender --background --python-exit-code 1 --python scripts/world_gate.py -- \
   --blend CH_Knight/CH_Knight_master.blend --out CH_Knight/review/gate_forms \
   --matte ref/front_clean.png --az 0 --m-per-px 0.0029167 --axis-col 109 --ground-row 610 \
   --collections LOW --name front
@@ -93,15 +93,18 @@ def matte_mask(rgba, tol):
 
 def band_widths(ref, mod, bands=10):
     ys = np.nonzero(ref.any(1))[0]
+    if not len(ys):
+        raise ValueError("empty reference mask")
     y0, y1 = ys.min(), ys.max()
+    height = y1 - y0 + 1
     out = []
     for k in range(bands):
-        yy = int(y0 + (k + 0.5) * (y1 - y0) / bands)
+        yy = int(y0 + (k + 0.5) * height / bands)
 
         def w(m):
             xs = np.nonzero(m[yy])[0]
             return (xs.max() - xs.min() + 1) if len(xs) else 0
-        out.append(round(float(w(mod) - w(ref)) / float(y1 - y0), 4))
+        out.append(round(float(w(mod) - w(ref)) / float(height), 4))
     return out
 
 
@@ -113,6 +116,8 @@ def main():
     ref_rgba = load_rgba(a.matte)
     H, W = ref_rgba.shape[:2]
     ref = matte_mask(ref_rgba, a.tol)
+    if not ref.any() or a.m_per_px <= 0 or a.scale <= 0:
+        raise ValueError("nonempty matte, positive m-per-px and positive scale required")
     S = a.m_per_px
 
     scene = bpy.context.scene

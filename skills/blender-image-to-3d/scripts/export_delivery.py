@@ -3,7 +3,7 @@ EXPORT DELIVERY
 Export the delivery selection (LOW meshes, deformation skeleton, sockets, colliders) to GLB or FBX,
 and write asset-manifest.json and animation-contract.json next to it. REF, HIGH and RIG_CTRL never export.
 
-blender --background --python scripts/export_delivery.py -- \
+blender --background --python-exit-code 1 --python scripts/export_delivery.py -- \
   --blend CH_Knight/CH_Knight_baked.blend --out CH_Knight/exports --name CH_Knight \
   --format GLB --collections LOW,RIG_DEF,SOCKETS,COLLISION --split-lods --inferred "back of cloak,sole tread"
 
@@ -164,8 +164,8 @@ def main(a):
             export(p, ms + extra, a)
             files["LOD%d" % level] = p
 
-    fps = scene.render.fps
-    actions = [act for act in bpy.data.actions if act.users and not act.name.startswith("_")]
+    fps = scene.render.fps / scene.render.fps_base
+    actions = [] if a.no_animation else [act for act in bpy.data.actions if act.users and not act.name.startswith("_")]
     contract = {"asset": a.name, "fps": fps, "time_unit": "seconds from clip start",
                 "clips": [action_contract(act, fps) for act in actions],
                 "note": "events come from pose markers on each action; loop/speed/root_motion from action custom properties"}

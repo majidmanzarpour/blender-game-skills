@@ -148,16 +148,16 @@ by eye:
 
 | Phase | What happens | Evidence at the gate |
 | --- | --- | --- |
-| 0. Brief | Reads every image and writes `asset-brief.md`: views and camera estimates, real scale and its evidence, 8 to 15 proportions to check, parts, materials, what must be inferred, target engine and budget | The brief; questions only for what the images cannot tell |
+| 0. Brief | Reads every image and writes `asset-brief.md`: views and camera estimates, real scale and its evidence, distinguishing proportions, parts, materials, what must be inferred, target engine and budget | The brief; consequential missing choices clarified |
 | 1. Calibration | Master `.blend` with reference images as planes at real scale, a ruler, grid cell, door clearance, collision capsule and the game camera | Everything after this is measured in the same file and scale |
 | 2. Blockout | Primary masses, separate appendages, joint centres and pivots | Clay and silhouette compare sheets: IoU 0.85 or more, band widths within 0.05, proportions within 5 percent |
 | 3. Forms | Secondary and tertiary forms, layered parts in their real overlap order | IoU 0.90 or more, band widths within 0.03, proportions within 2 percent, clay turntable |
-| 4. Topology | LOW delivery meshes over the approved forms, LOD1 and LOD2 | `validate.py` within the triangle budget, wire render, no silhouette loss |
+| 4. Topology | LOW delivery meshes over the approved forms, additional LODs when required | `validate.py` within the triangle budget, wire render, no silhouette loss |
 | 5. UVs, baking, materials | UVs, original materials, baked portable maps | Material turntable under a moving light, greyscale at gameplay size, clean checker render |
 | 6. Rig | Deformation skeleton, controls, pivots, sockets and weights (skipped for static props) | Extreme-pose sheet; no unweighted or over-influenced vertices |
 | 7. Secondary motion | Cloth, chains, tails, wings or cables, only where the brief asks for them | Posed renders without penetration |
 | 8. Animation | Named clips with loop flags and event markers, only when requested | Clips rendered at the game camera, loop seams and event timings checked |
-| 9. Export and round trip | GLB or FBX with `asset-manifest.json` and `animation-contract.json`, then a reimport into an empty scene | Triangle counts, bones, clips and images match the manifest; height within 1 percent |
+| 9. Export and round trip | GLB or FBX with `asset-manifest.json` and `animation-contract.json`, then a reimport into an empty scene | Mesh names, triangle totals and required deformation bones checked against the manifest; height within 1 percent. Clip timing and texture roles inspected separately |
 | 10. Acceptance | Acceptance checklist and a `review/final/` handover folder | Report of what matches, the deviations that remain, what was inferred and the budgets used |
 
 ### What to expect
@@ -167,10 +167,10 @@ by eye:
   format, real size when nothing in the image gives scale, budget tier, whether to rig and
   animate, and the game camera. It offers defaults (1 unit = 1 m, Z up, GLB, the standard budget
   tier, a three-quarter camera at 50 mm, 128 px subject height) and uses them if you tell it to
-  just go.
+  proceed. Only the phases and deliverables needed for your request are required.
 - At the end of each phase it shows a compare sheet (reference, render, overlay, gameplay-size
-  strip), the measured deviations and what was inferred, then waits for your approval. If you
-  tell it not to ask, it continues whenever the tolerance is met and keeps the sheets in
+  strip), the measured deviations and what was inferred. It continues within the authorized
+  workflow unless you requested phase approval or a consequential choice is unresolved, keeping sheets in
   `<asset>/review/`.
 - Claude Code asks for permission before it runs Blender or Python commands, unless you have
   allowed them.
@@ -185,7 +185,7 @@ CH_Knight/
 |-- asset-brief.md
 |-- ref/                      # the references, including crops of multi-view sheets
 |-- CH_Knight_master.blend    # source of truth: REF, HIGH, LOW, RIG_DEF, COLLISION, SOCKETS ...
-|-- CH_Knight_baked.blend     # after Phase 5: delivery materials wired to the baked maps
+|-- CH_Knight_baked.blend     # regenerated from the finished master before export
 |-- build/                    # 02_blockout.py, 03_forms.py, ...: re-runnable phase scripts
 |-- review/                   # compare sheets, gate JSON, turntables, final/
 |-- textures/                 # baked maps
@@ -235,7 +235,11 @@ need them to rerun a gate yourself or to work without an agent.
 master file, deletes the objects it owns, rebuilds them and saves, so any phase can be rerun.
 
 Every script prints its options with `--help`. For the Blender scripts, put it after the `--`
-separator: `blender --background --python scripts/validate.py -- --help`.
+separator: `blender --background --python-exit-code 1 --python scripts/validate.py -- --help`.
+
+Use `--python-exit-code 1` before `--python` when running Blender helpers so exceptions produce
+a failing process exit code. An empty delivery, missing render scope, missing UVs or unavailable
+requested bake map is an error. Do not infer gate success from a file left by an earlier run.
 
 Example: the review and gate loop. The values come from the skill's example, a 1.85 m knight; in
 a real build they come from the brief.
@@ -245,7 +249,7 @@ SKILL=~/.claude/skills/blender-image-to-3d   # where the skill is installed
 BLENDER=${BLENDER_BIN:-blender}
 
 # 1. Clay renders of the LOW collection from the fixed views and the reference-matched camera
-"$BLENDER" --background --python "$SKILL/scripts/review_render.py" -- \
+"$BLENDER" --background --python-exit-code 1 --python "$SKILL/scripts/review_render.py" -- \
   --blend CH_Knight/CH_Knight_master.blend --out CH_Knight/review/02_blockout \
   --collections LOW --views front,side,threequarter --ref-cam 35 12 50 --mode clay --gameplay-px 128
 
@@ -255,7 +259,7 @@ python3 "$SKILL/scripts/compose_review.py" --ref ref/front.png \
   --out CH_Knight/review/02_blockout/compare_front.png --measure --gameplay-px 128
 
 # 3. Orthographic sheets only: world-registered IoU against a cleaned matte of the front view
-"$BLENDER" --background --python "$SKILL/scripts/world_gate.py" -- \
+"$BLENDER" --background --python-exit-code 1 --python "$SKILL/scripts/world_gate.py" -- \
   --blend CH_Knight/CH_Knight_master.blend --out CH_Knight/review/02_blockout \
   --matte ref/front_clean.png --az 0 --m-per-px 0.0029167 --axis-col 109 --ground-row 610 \
   --collections LOW --name front
@@ -303,7 +307,7 @@ every mismatch is inside the phase tolerance.
 
 Issues and pull requests are welcome. For larger changes, open an issue first.
 
-- Scripts run headless (`blender --background --python <script> -- <args>`), accept `--help`, and
+- Scripts run headless (`blender --background --python-exit-code 1 --python <script> -- <args>`), accept `--help`, and
   look up nodes by type, not by display name, because display names are translated in
   non-English Blender UIs.
 - Test on Blender 4.2 and a current 5.x release where you can, and record API differences in the
@@ -314,6 +318,17 @@ Issues and pull requests are welcome. For larger changes, open an issue first.
   detail into `references/`.
 - For changes to a skill's behaviour, run the prompts in its `evals/evals.json` before and after,
   for example with Anthropic's skill-creator skill.
+
+For reproducible script checks, run the smoke test with Python + Pillow and an installed Blender:
+
+```bash
+python3 skills/blender-image-to-3d/scripts/test_pipeline.py --blender /path/to/blender
+```
+
+It creates temporary fixtures for calibration, validation, baking, review rendering and GLB
+export/reimport, including negative checks that must fail. Pass `--out /new/directory` to retain
+artifacts and logs. The eval prompts require reference images not bundled in this repository;
+the smoke test does not replace artistic review or testing in the target engine.
 
 To try a working copy in Claude Code, link it into your skills folder after removing any installed
 copy: `ln -s "$PWD/skills/blender-image-to-3d" ~/.claude/skills/blender-image-to-3d`.
