@@ -3,7 +3,7 @@ INIT MASTER
 Create the master .blend for one asset: units, collections, calibration objects,
 reference images placed at real scale, and the intended game camera.
 
-blender --background --python scripts/init_master.py -- \
+blender --background --python-exit-code 1 --python scripts/init_master.py -- \
   --out CH_Knight/CH_Knight_master.blend --name CH_Knight --height 1.85 \
   --ref-front ref/front.png --ref-right ref/side.png --ref-back ref/back.png \
   --ref-extra ref/concept.png --subject-frac 0.9 --ground-frac 0.05 \
@@ -119,8 +119,9 @@ def image_empty(name, path, col, height_m, rotation, location, offset, alpha):
 # MAIN
 
 def main(a):
+    if a.height <= 0 or not 0 < a.subject_frac <= 1 or not 0 <= a.ground_frac < 1:
+        raise ValueError("height must be positive; subject-frac in (0, 1], ground-frac in [0, 1)")
     bpy.ops.wm.read_factory_settings(use_empty=True)
-    bpy.context.preferences.filepaths.save_version = 0   # no .blend1 backups
     scene = bpy.context.scene
     scene.name = a.name
     scene.unit_settings.system = "METRIC"
@@ -180,7 +181,7 @@ def main(a):
     scene.camera = cam
 
     # REFERENCE IMAGES (standing planes behind the subject, ground line on z = 0)
-    hd = H / max(0.05, a.subject_frac - a.ground_frac)   # image height in metres so the subject spans H
+    hd = H / a.subject_frac   # occupied image fraction; ground offset does not change scale
     offset = (-0.5, -a.ground_frac)
     p2 = math.pi / 2
     if a.ref_front:

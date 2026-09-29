@@ -2,7 +2,7 @@
 BUILD PHASE TEMPLATE
 Copy this file to <asset>/build/NN_<phase>.py, fill in build(), run:
 
-  blender --background --python build/02_blockout.py -- --master <asset>_master.blend
+  blender --background --python-exit-code 1 --python build/02_blockout.py -- --master <asset>_master.blend
 
 Every phase script is re-runnable: it opens the master, deletes what it owns
 (objects whose names carry OWNER_TAG in a custom property), rebuilds them, saves.
@@ -31,7 +31,6 @@ def open_master(path):
 
 
 def save_master(path):
-    bpy.context.preferences.filepaths.save_version = 0   # no .blend1 backups
     bpy.ops.wm.save_as_mainfile(filepath=os.path.abspath(path))
 
 

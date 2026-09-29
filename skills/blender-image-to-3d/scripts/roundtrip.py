@@ -4,11 +4,12 @@ Import the exported file into a blank Blender, report what actually arrived (mes
 materials, images, bones, clips, bounds) and render a clay frame. The export is only trusted
 after this passes; the modelling viewport is not evidence of what an engine will receive.
 
-blender --background --python scripts/roundtrip.py -- \
+blender --background --python-exit-code 1 --python scripts/roundtrip.py -- \
   --file CH_Knight/exports/CH_Knight.glb --out CH_Knight/review/09_roundtrip --expect-height 1.85
 
-Compare the report against asset-manifest.json: same tri counts per LOD, same bone names,
-same clip lengths, no missing images, height within 1 percent of the target.
+Checks object names, triangle totals per LOD and required deformation bones against
+asset-manifest.json beside the export (override with --manifest). Clip timing, texture
+roles and visual appearance still require inspection of the report and rendered evidence.
 """
 import bpy, sys, os, math, json, argparse
 from mathutils import Vector
@@ -19,6 +20,7 @@ def parse(argv):
     p.add_argument("--file", required=True)
     p.add_argument("--out", required=True)
     p.add_argument("--expect-height", type=float, default=0.0)
+    p.add_argument("--manifest", help="defaults to asset-manifest.json beside the export")
     p.add_argument("--res", type=int, default=768)
     return p.parse_args(argv)
 
@@ -28,11 +30,48 @@ def view_direction(az_deg, el_deg):
     return Vector((math.sin(az) * math.cos(el), -math.cos(az) * math.cos(el), math.sin(el)))
 
 
+def check_manifest(report, manifest, path):
+    """Compare the combined export or the matching split LOD with its source contract."""
+    keys = [key for key, value in manifest["files"].items()
+            if os.path.basename(value) == os.path.basename(path)]
+    if len(keys) != 1:
+        report["errors"].append("export is not uniquely identified in manifest files")
+        return
+    key = keys[0]
+    lods = [lod for lod in manifest["lods"] if key == "all" or key == "LOD%d" % lod["level"]]
+    if not lods:
+        report["errors"].append("manifest contains no matching delivery LOD")
+        return
+    meshes = {mesh["name"]: mesh for mesh in report["meshes"]}
+    expected = set()
+    for lod in lods:
+        expected.update(lod["objects"])
+        missing = set(lod["objects"]) - meshes.keys()
+        if missing:
+            report["errors"].append("missing LOD objects: " + ", ".join(sorted(missing)))
+        tris = sum(meshes[name]["tris"] for name in lod["objects"] if name in meshes)
+        if tris != lod["tris"]:
+            report["errors"].append("LOD%d triangles: expected %d, imported %d" % (lod["level"], lod["tris"], tris))
+    if key in ("all", "LOD0"):
+        expected.update(collider["name"] for collider in manifest.get("colliders", []))
+    if meshes.keys() != expected:
+        report["errors"].append("imported mesh names differ from manifest")
+    bones = {bone for arm in report["armatures"] for bone in arm["bones"]}
+    required = {bone for arm in manifest.get("skeleton", []) for bone in arm["deform_bones"]}
+    if not required <= bones:
+        report["errors"].append("missing deformation bones: " + ", ".join(sorted(required - bones)))
+    report["manifest_checks"] = ["mesh names", "triangles per LOD", "required deformation bones"]
+    report["manual_checks"] = ["clip names and timing", "texture roles and packing", "visual match"]
+
+
 def main(a):
     bpy.ops.wm.read_factory_settings(use_empty=True)
     scene = bpy.context.scene
     os.makedirs(a.out, exist_ok=True)
     path = os.path.abspath(a.file)
+    manifest_path = a.manifest or os.path.join(os.path.dirname(path), "asset-manifest.json")
+    with open(manifest_path) as f:
+        manifest = json.load(f)
     ext = os.path.splitext(path)[1].lower()
     if ext in (".glb", ".gltf"):
         kw = {"filepath": path}
@@ -75,7 +114,7 @@ def main(a):
     for act in bpy.data.actions:
         fs, fe = act.frame_range
         report["clips"].append({"name": act.name, "frames": [int(fs), int(fe)],
-                                "length_s": round((fe - fs) / scene.render.fps, 4)})
+                                "length_s": round((fe - fs) / (scene.render.fps / scene.render.fps_base), 4)})
     for m in bpy.data.materials:
         if m.users:
             report["materials"].append(m.name)
@@ -87,6 +126,7 @@ def main(a):
                 report["errors"].append("image missing: " + img.name)
     if not report["meshes"]:
         report["errors"].append("no meshes imported")
+    check_manifest(report, manifest, path)
     if pts:
         lo = [min(p[i] for p in pts) for i in range(3)]
         hi = [max(p[i] for p in pts) for i in range(3)]

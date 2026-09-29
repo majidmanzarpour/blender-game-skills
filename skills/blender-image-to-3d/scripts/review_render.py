@@ -3,7 +3,7 @@ REVIEW RENDER
 Render the asset from fixed review views plus a camera matched to the reference image.
 PNGs have a transparent background so compose_review.py can measure the silhouette.
 
-blender --background --python scripts/review_render.py -- \
+blender --background --python-exit-code 1 --python scripts/review_render.py -- \
   --blend CH_Knight/CH_Knight_master.blend --out CH_Knight/review/02_blockout \
   --collections LOW --views front,side,threequarter --ref-cam 35 12 50 \
   --mode clay --res 1024 --gameplay-px 128
@@ -30,7 +30,7 @@ def parse(argv):
     p = argparse.ArgumentParser()
     p.add_argument("--blend", required=True)
     p.add_argument("--out", required=True)
-    p.add_argument("--collections", default="LOW", help="comma list; empty collections are skipped")
+    p.add_argument("--collections", default="LOW", help="comma list of existing collections")
     p.add_argument("--views", default="front,side,threequarter")
     p.add_argument("--ref-cam", type=float, nargs=3, default=None, metavar=("AZ", "EL", "LENS"))
     p.add_argument("--mode", default="clay", choices=["clay", "silhouette", "wire", "checker", "material"])
@@ -54,19 +54,21 @@ def scope_objects(a):
     names = [n for n in a.collections.split(",") if n]
     objs = []
     if a.only:
+        missing = [n for n in a.only.split(",") if n not in bpy.data.objects]
+        if missing:
+            raise ValueError("objects not found: " + ", ".join(missing))
         objs = [bpy.data.objects[n] for n in a.only.split(",") if n in bpy.data.objects]
     else:
         for n in names:
             c = bpy.data.collections.get(n)
+            if c is None:
+                raise ValueError("collection not found: " + n)
             if c:
                 objs += [o for o in c.all_objects if o.type in RENDERABLE and not o.hide_render]
         if a.show_ref and bpy.data.collections.get("REF"):
             objs += [o for o in bpy.data.collections["REF"].all_objects if o.type == "MESH"]
     if not objs:
-        skip = {"REF", "COLLISION", "SOCKETS", "RIG_CTRL", "RIG_DEF"}
-        for o in bpy.data.objects:
-            if o.type in RENDERABLE and not o.hide_render and not any(c.name in skip for c in o.users_collection):
-                objs.append(o)
+        raise ValueError("nothing to render in requested scope")
     seen, out = set(), []
     for o in objs:
         if o.name not in seen:
@@ -285,7 +287,7 @@ def main(a):
             if hasattr(ad, "action_slot") and getattr(act, "slots", None) and len(act.slots):
                 ad.action_slot = act.slots[0]
         else:
-            print("WARNING action or armature not found:", a.action)
+            raise ValueError("action or armature not found: " + a.action)
     if a.frame is not None:
         scene.frame_set(a.frame)
     bpy.context.view_layer.update()
@@ -314,7 +316,7 @@ def main(a):
         elif v in FIXED_VIEWS:
             views[v] = FIXED_VIEWS[v]
         else:
-            print("WARNING unknown view", v)
+            raise ValueError("unknown view: " + v)
     if a.ref_cam:
         views["ref"] = tuple(a.ref_cam)
 

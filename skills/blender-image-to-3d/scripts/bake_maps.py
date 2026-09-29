@@ -2,11 +2,11 @@
 BAKE MAPS
 Bake the texture contract for every LOW mesh with Cycles:
   normal, ao   : HIGH to LOW (selected to active) with a cage extrusion and ray distance
-  basecolor, roughness, metallic : from the LOW object's own procedural or painted material
+  basecolor, roughness, metallic : HIGH when present, otherwise LOW (--surface-from overrides)
 Then optionally rebuild each LOW material as a plain Principled BSDF wired to the baked images,
 which is what glTF/FBX export can carry.
 
-blender --background --python scripts/bake_maps.py -- \
+blender --background --python-exit-code 1 --python scripts/bake_maps.py -- \
   --blend CH_Knight/CH_Knight_master.blend --low LOW --high HIGH --res 2048 \
   --maps normal,ao,basecolor,roughness,metallic --out CH_Knight/textures \
   --extrusion 0.02 --ray-dist 0.05 --margin 16 --samples 64 --rebuild-material \
@@ -247,7 +247,7 @@ def bake(scene, kind, low, highs, img, a):
     finally:
         for o in hidden:
             o.hide_render = False
-    clear_bake_targets(added)
+        clear_bake_targets(added)
 
 
 def rebuild_material(low, images):
@@ -274,6 +274,18 @@ def rebuild_material(low, images):
         nm.location = (-400, y)
         nt.links.new(t.outputs["Color"], nm.inputs["Color"])
         nt.links.new(nm.outputs["Normal"], bsdf.inputs["Normal"])
+    if "ao" in images:
+        # glTF reads this socket; keep AO separate from base colour lighting.
+        group = bpy.data.node_groups.get("glTF Material Output")
+        if group is None:
+            group = bpy.data.node_groups.new("glTF Material Output", "ShaderNodeTree")
+        if not any(s.name == "Occlusion" and s.in_out == "INPUT" for s in group.interface.items_tree if s.item_type == "SOCKET"):
+            group.interface.new_socket(name="Occlusion", in_out="INPUT", socket_type="NodeSocketFloat")
+        output = nt.nodes.new("ShaderNodeGroup")
+        output.node_tree = group
+        texture = nt.nodes.new("ShaderNodeTexImage")
+        texture.image = images["ao"]
+        nt.links.new(texture.outputs["Color"], output.inputs["Occlusion"])
     low.data.materials.clear()
     low.data.materials.append(m)
     return m
@@ -299,8 +311,13 @@ def main(a):
         lows = [o for o in lows if o.name in a.only.split(",")]
     highs_all = objects_in(a.high)
     maps = [m for m in a.maps.split(",") if m]
+    if not maps or set(maps) - (DATA_MAPS | {"basecolor"}):
+        raise ValueError("maps must be a nonempty list of normal,ao,basecolor,roughness,metallic")
     if not lows:
         raise RuntimeError("no LOW meshes found in collection " + a.low)
+    missing_uv = [o.name for o in lows if not o.data.uv_layers]
+    if missing_uv:
+        raise RuntimeError("missing UVs: " + ", ".join(missing_uv))
 
     def walk(lc):
         lc.exclude = False
@@ -309,9 +326,6 @@ def main(a):
     walk(bpy.context.view_layer.layer_collection)
 
     for low in lows:
-        if not low.data.uv_layers:
-            print("SKIP no UVs:", low.name)
-            continue
         ensure_material(low)
         highs = highs_all
         if a.match_by_name:
@@ -337,25 +351,25 @@ def main(a):
                 if highs:
                     bake(scene, "NORMAL", low, highs, img, a)
                 else:
-                    print("  normal skipped: no HIGH objects")
-                    continue
+                    raise RuntimeError("normal bake requires matching HIGH objects: " + low.name)
             elif kind == "ao":
                 bake(scene, "AO", low, highs if highs else None, img, a)
             elif kind == "basecolor":
                 r = [unlink_normal_inputs(o) for o in surface_objs]
-                bake(scene, "DIFFUSE", low, surface_highs, img, a)
-                for rr in r:
-                    relink(rr)
+                try:
+                    bake(scene, "DIFFUSE", low, surface_highs, img, a)
+                finally:
+                    for rr in r:
+                        relink(rr)
             elif kind == "roughness":
                 bake(scene, "ROUGHNESS", low, surface_highs, img, a)
             elif kind == "metallic":
                 r = [metallic_to_emission(o) for o in surface_objs]
-                bake(scene, "EMIT", low, surface_highs, img, a)
-                for rr in r:
-                    restore_emission(rr)
-            else:
-                print("  unknown map", kind)
-                continue
+                try:
+                    bake(scene, "EMIT", low, surface_highs, img, a)
+                finally:
+                    for rr in r:
+                        restore_emission(rr)
             path = os.path.join(a.out, img.name + ".png")
             img.filepath_raw = path
             img.file_format = "PNG"

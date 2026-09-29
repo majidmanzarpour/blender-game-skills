@@ -3,7 +3,7 @@ VALIDATE
 Report everything that will break deformation, baking or export before it does.
 Writes JSON and prints a summary. Exit code 1 when any FAIL is present.
 
-blender --background --python scripts/validate.py -- \
+blender --background --python-exit-code 1 --python scripts/validate.py -- \
   --blend CH_Knight/CH_Knight_master.blend --collections LOW,COLLISION,SOCKETS \
   --out CH_Knight/review/validate.json --budget-tris 60000 --max-influences 4 --require-uv
 
@@ -201,11 +201,13 @@ def socket_checks(ob, report):
 def main(a):
     bpy.ops.wm.open_mainfile(filepath=os.path.abspath(a.blend))
     dg = bpy.context.evaluated_depsgraph_get()
-    objs = []
+    objs, missing = [], []
     for n in [x for x in a.collections.split(",") if x]:
         c = bpy.data.collections.get(n)
         if c:
             objs += list(c.all_objects)
+        else:
+            missing.append(n)
     seen = set()
     report, total_tris, lod_tris = [], 0, {}
     for ob in objs:
@@ -228,6 +230,9 @@ def main(a):
             armature_checks(ob, report)
 
     summary = {"tris_by_lod": lod_tris, "fail": [], "warn": []}
+    summary["fail"] += ["collection not found: " + n for n in missing]
+    if not any(lod_tris.values()):
+        summary["fail"].append("no delivery mesh triangles in selected collections")
     lod0 = lod_tris.get(0, 0)
     if a.budget_tris and lod0 > a.budget_tris:
         summary["fail"].append("LOD0 tris %d exceed budget %d" % (lod0, a.budget_tris))
